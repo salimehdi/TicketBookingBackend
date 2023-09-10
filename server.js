@@ -28,8 +28,54 @@ app.use(async (req, res, next) => {
   next();
 });
 
+app.post("/api/buy", async (req, res) => {
+  const { uid } = req.user;
+  const { items } = req.body;
+  console.log(items);
+  try {
+    for (const [name, quantity] of Object.entries(items)) {
+      const event = await db.collection("eventList").findOne({ name });
+      console.log(name);
+      if (event) {
+        await db.collection("eventList").updateOne(
+          { name },
+          {
+            $inc: {
+              availableTickets: -quantity,
+            },
+          }
+        );
+
+        const { ticketPrice } = event;
+
+        await db.collection("user").updateOne(
+          { uid },
+          {
+            $set: { item: [] },
+            $push: {
+              orders: {
+                name,
+                quantity,
+                ticketPrice,
+              },
+            },
+          }
+        );
+      } else {
+        return res.sendStatus(404);
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (e) {
+    console.error(e);
+    res.sendStatus(500);
+  }
+});
+
+
 app.get("/api/info", async (req, res) => {
-  const { email, uid } = req.user;
+  const { email } = req.user;
   if (email) {
     res.send({ email });
   } else {
@@ -66,8 +112,13 @@ app.get("/api/addtocart/:name", async (req, res) => {
     const { uid } = req.user;
     const { name } = req.params;
     const cartItems = await db.collection("user").findOne({ uid });
+    {
+      uid===null && res.sendStatus(400);
+    }
     if (!cartItems) {
       await db.collection("user").insertOne({ uid: uid, item: [name] });
+    } else if (uid === null) {
+      return res.sendStatus(400);
     } else {
       const itemNames = cartItems.item;
       if (!itemNames.includes(name)) {
@@ -100,13 +151,52 @@ app.get("/api/cartItems", async (req, res) => {
   }
 });
 
+
+
+app.get("/api/orders", async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const cartItems = await db.collection("user").findOne({ uid: uid });
+
+    if (!cartItems || !cartItems.orders) {
+      return res.send([]);
+    }
+
+    const itemNames = cartItems.orders;
+    const arr = [];
+
+    for (const itemName of itemNames) {
+      const item = await db.collection("eventList").findOne({ name: itemName.name });
+      item.quantity = itemName.quantity;
+      let flag = false; // Initialize flag for each itemName
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i].name === item.name) {
+      arr[i].quantity += item.quantity;
+      flag = true;
+      break; // Exit the loop after updating the quantity
+    }
+  }
+  if (!flag) {
+    arr.push(item);
+  }
+    }
+    console.log(arr);
+    res.send(arr);
+  } catch (e) {
+    console.error(e);
+    res.sendStatus(500);
+  }
+});
+
+
+
 app.get("/api/cart", async (req, res) => {
   try {
     const { uid } = req.user;
     const cartItems = await db.collection("user").findOne({ uid: uid });
 
     if (!cartItems || !cartItems.item) {
-      return res.sendStatus(404);
+      return res.send([]);
     }
 
     const itemNames = cartItems.item;
